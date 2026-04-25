@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+<meta name="theme-color" content="#08010f" />
+<title>腕立て・スクワットカウント</title>
+<link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+P+One&family=Kosugi+Maru&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;overflow:hidden}
+body{font-family:"Kosugi Maru",system-ui,sans-serif;color:#fff;background:linear-gradient(180deg,#0a2540,#08010f);touch-action:manipulation;user-select:none;-webkit-tap-highlight-color:transparent}
+#app{display:flex;flex-direction:column;height:100dvh;padding:10px;gap:8px;max-width:480px;margin:0 auto;align-items:center}
+.title{font-family:"Mochiy Pop P One",sans-serif;font-size:20px;color:#a3e635;-webkit-text-stroke:2.5px #000;paint-order:stroke fill;text-shadow:3px 3px 0 #ff5fa2;margin:6px 0;text-align:center}
+.cam-wrap{flex:1;width:100%;max-width:380px;aspect-ratio:3/4;border-radius:18px;overflow:hidden;position:relative;background:#000;border:4px solid #a3e635;box-shadow:0 0 20px rgba(163,230,53,.4)}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.bar{position:absolute;left:0;right:0;bottom:0;height:6px;background:rgba(0,0,0,.5)}
+.bar div{height:100%;background:linear-gradient(90deg,#a3e635,#fbbf24,#ef4444);width:0;transition:width .1s}
+.count{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-family:"Mochiy Pop P One",sans-serif;font-size:120px;color:#fff;text-shadow:4px 4px 0 #000,0 0 20px rgba(0,0,0,.8);pointer-events:none;line-height:1}
+.state{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.7);padding:6px 10px;border-radius:999px;font-family:"Mochiy Pop P One",sans-serif;font-size:12px}
+.mode-row{display:flex;gap:6px;background:rgba(0,0,0,.4);border:2px solid #a3e635;border-radius:999px;padding:3px}
+.mode-row button{background:transparent;border:0;color:#fff;padding:6px 12px;font-family:"Mochiy Pop P One",sans-serif;font-size:12px;border-radius:999px;cursor:pointer}
+.mode-row button.on{background:#a3e635;color:#000}
+.actions{display:flex;gap:8px;width:100%;justify-content:center;flex-wrap:wrap}
+.actions button{background:#a3e635;color:#000;border:3px solid #000;padding:10px 18px;font-family:"Mochiy Pop P One",sans-serif;font-size:13px;border-radius:999px;cursor:pointer;box-shadow:3px 3px 0 #000}
+.actions .red{background:#ef4444;color:#fff}
+.actions button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 #000}
+.actions button:disabled{opacity:.4}
+.note{font-size:9px;opacity:.65;text-align:center;line-height:1.5}
+.err{padding:10px;background:rgba(255,0,0,.2);border:2px solid #f55;border-radius:10px;font-size:12px;display:none}
+.err.show{display:block}
+</style>
+</head>
+<body>
+<div id="app">
+<h1 class="title">腕立て・スクワットカウント</h1>
+<div class="mode-row">
+  <button data-m="pushup" class="on">💪 腕立て</button>
+  <button data-m="squat">🦵 スクワット</button>
+  <button data-m="any">🏋 何でも</button>
+</div>
+<div class="cam-wrap">
+  <video id="vid" autoplay playsinline muted></video>
+  <div class="state" id="state">待機中</div>
+  <div class="count" id="count">0</div>
+  <div class="bar"><div id="barfill"></div></div>
+</div>
+<div class="actions">
+  <button id="btn-start">📷 起動</button>
+  <button id="btn-reset" class="red">↺ リセット</button>
+</div>
+<div class="note">画面中央に体が映るように設置・上下運動でカウント<br/>※端末内処理のみ・送信なし</div>
+<div class="err" id="err"></div>
+</div>
+<script>
+(()=>{
+'use strict';
+const $=(id)=>document.getElementById(id);
+const vid=$('vid'),countEl=$('count'),stateEl=$('state'),barfill=$('barfill');
+let stream=null,running=false,mode='pushup';
+let count=0,lastFrame=null,phase='idle';// idle/down/up
+let baseline=null,minMot=Infinity,maxMot=-Infinity,lastSwitch=0;
+let cv=document.createElement('canvas');cv.width=64;cv.height=48;
+const ctx=cv.getContext('2d',{willReadFrequently:true});
+async function startCam(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:480,height:640},audio:false});
+    vid.srcObject=stream;await vid.play();
+    $('btn-start').disabled=true;$('btn-start').textContent='✓ 起動済';
+    running=true;loop();
+  }catch(e){$('err').textContent='カメラ起動失敗: '+e.message;$('err').classList.add('show')}
+}
+// motion detection: sample brightness in vertical bands, track center-of-mass y
+function sample(){
+  ctx.drawImage(vid,0,0,cv.width,cv.height);
+  const d=ctx.getImageData(0,0,cv.width,cv.height).data;
+  let sumY=0,sumW=0,total=0,bright=0;
+  // diff vs lastFrame to detect motion silhouette
+  if(!lastFrame)lastFrame=new Uint8ClampedArray(d.length);
+  for(let y=0;y<cv.height;y++){
+    for(let x=0;x<cv.width;x++){
+      const i=(y*cv.width+x)*4;
+      const v=(d[i]+d[i+1]+d[i+2])/3;
+      const dv=Math.abs(v-((lastFrame[i]+lastFrame[i+1]+lastFrame[i+2])/3));
+      if(dv>15){sumY+=y*dv;sumW+=dv;total++}
+      bright+=v;
+    }
+  }
+  for(let i=0;i<d.length;i++)lastFrame[i]=d[i];
+  const cy=sumW>0?sumY/sumW/cv.height:.5;// 0..1
+  return{cy,motion:total/(cv.width*cv.height),bright:bright/(cv.width*cv.height*255)};
+}
+let history=[];
+function loop(){
+  if(!running)return;
+  if(vid.videoWidth>0){
+    const s=sample();
+    // for pushup/any: vertical movement of motion centroid; for squat similar
+    history.push(s.cy);if(history.length>30)history.shift();
+    if(history.length>=10){
+      const min=Math.min(...history),max=Math.max(...history);
+      const range=max-min;
+      barfill.style.width=Math.min(100,range*200)+'%';
+      // threshold-based rep: detect transition between high-cy (down) and low-cy (up)
+      const cur=s.cy;
+      const now=Date.now();
+      if(range>.10 && now-lastSwitch>350){
+        if(phase!=='down' && cur>min+range*.7){
+          phase='down';stateEl.textContent='⬇ 下';
+          lastSwitch=now;beep(330,.06);
+        }else if(phase==='down' && cur<min+range*.3){
+          phase='up';stateEl.textContent='⬆ 上';
+          count++;countEl.textContent=count;
+          lastSwitch=now;
+          beep(880,.12);
+          if(count%10===0)fanfare();
+          flash();
+        }
+      }
+    }
+  }
+  requestAnimationFrame(loop);
+}
+function flash(){countEl.style.transform='translate(-50%,-50%) scale(1.3)';setTimeout(()=>countEl.style.transform='translate(-50%,-50%)',150)}
+let ac=null;const en=()=>{if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();if(ac.state==='suspended')ac.resume();return ac};
+const beep=(f,d,t='triangle',g=.13)=>{const a=en();const o=a.createOscillator();const gn=a.createGain();o.type=t;o.frequency.value=f;gn.gain.value=g;gn.gain.exponentialRampToValueAtTime(.0001,a.currentTime+d);o.connect(gn).connect(a.destination);o.start();o.stop(a.currentTime+d)};
+const fanfare=()=>{[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.16),i*80))};
+$('btn-start').addEventListener('click',()=>{en();startCam()});
+$('btn-reset').addEventListener('click',()=>{count=0;countEl.textContent='0';phase='idle';history=[];stateEl.textContent='待機中';barfill.style.width='0%'});
+document.querySelectorAll('.mode-row button').forEach(b=>b.addEventListener('click',()=>{
+  mode=b.dataset.m;
+  document.querySelectorAll('.mode-row button').forEach(x=>x.classList.toggle('on',x===b));
+}));
+countEl.style.transition='transform .15s';
+})();
+</script>
+</body>
+</html>
