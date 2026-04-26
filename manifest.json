@@ -1,0 +1,18 @@
+{
+  "name": "腕立て・スクワットカウント",
+  "short_name": "腕立て",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08010f",
+  "theme_color": "#08010f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
