@@ -40,11 +40,11 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transfor
 <meta property="og:title" content="腕立て・スクワットカウント">
 <meta property="og:description" content="カメラで腕立て・スクワットを自動カウント">
 <meta property="og:url" content="https://maxtakaharu34-cmd.github.io/pushup-jp/">
-<meta property="og:image" content="og.svg">
+<meta property="og:image" content="og.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="腕立て・スクワットカウント">
 <meta name="twitter:description" content="カメラで腕立て・スクワットを自動カウント">
-<meta name="twitter:image" content="og.svg">
+<meta name="twitter:image" content="og.png">
 <!-- spark-og-v1 -->
 </head>
 <body>
@@ -84,7 +84,28 @@ async function startCam(){
     vid.srcObject=stream;await vid.play();
     $('btn-start').disabled=true;$('btn-start').textContent='✓ 起動済';
     running=true;loop();
+    calibrate();
   }catch(e){$('err').textContent='カメラ起動失敗: '+e.message;$('err').classList.add('show')}
+}
+// 3-second calibration: collect baseline before counting reps
+let calibrating=false,calibSamples=[];
+function calibrate(){
+  calibrating=true;calibSamples=[];
+  let n=3;
+  stateEl.textContent='⏳ '+n+'秒待機（動かないで）';
+  beep(440,.15);
+  const tick=setInterval(()=>{
+    n--;
+    if(n>0){stateEl.textContent='⏳ '+n+'秒待機（動かないで）';beep(440,.1)}
+    else{
+      clearInterval(tick);
+      calibrating=false;
+      stateEl.textContent='▶ 動いてOK';
+      fanfare();
+      // reset history so calibration noise doesn't trigger initial rep
+      history=[];phase='idle';
+    }
+  },1000);
 }
 // motion detection: sample brightness in vertical bands, track center-of-mass y
 function sample(){
@@ -109,7 +130,7 @@ function sample(){
 let history=[];
 function loop(){
   if(!running)return;
-  if(vid.videoWidth>0){
+  if(vid.videoWidth>0 && !calibrating){
     const s=sample();
     // for pushup/any: vertical movement of motion centroid; for squat similar
     history.push(s.cy);if(history.length>30)history.shift();
@@ -142,7 +163,7 @@ let ac=null;const en=()=>{if(!ac)ac=new(window.AudioContext||window.webkitAudioC
 const beep=(f,d,t='triangle',g=.13)=>{const a=en();const o=a.createOscillator();const gn=a.createGain();o.type=t;o.frequency.value=f;gn.gain.value=g;gn.gain.exponentialRampToValueAtTime(.0001,a.currentTime+d);o.connect(gn).connect(a.destination);o.start();o.stop(a.currentTime+d)};
 const fanfare=()=>{[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.16),i*80))};
 $('btn-start').addEventListener('click',()=>{en();startCam()});
-$('btn-reset').addEventListener('click',()=>{count=0;countEl.textContent='0';phase='idle';history=[];stateEl.textContent='待機中';barfill.style.width='0%'});
+$('btn-reset').addEventListener('click',()=>{count=0;countEl.textContent='0';phase='idle';history=[];barfill.style.width='0%';if(stream)calibrate();else stateEl.textContent='待機中'});
 document.querySelectorAll('.mode-row button').forEach(b=>b.addEventListener('click',()=>{
   mode=b.dataset.m;
   document.querySelectorAll('.mode-row button').forEach(x=>x.classList.toggle('on',x===b));
